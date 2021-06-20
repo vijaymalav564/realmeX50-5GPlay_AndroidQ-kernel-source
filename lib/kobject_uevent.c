@@ -29,6 +29,10 @@
 #include <net/netlink.h>
 #include <net/net_namespace.h>
 
+#ifdef VENDOR_EDIT
+extern int oppo_get_uevent_state(void);
+static uevent_print_cnt = 1000;
+#endif
 
 u64 uevent_seqnum;
 #ifdef CONFIG_UEVENT_HELPER
@@ -548,6 +552,23 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 				goto exit;
 		}
 	}
+
+        #ifdef  VENDOR_EDIT
+	// add by yanghao for debug userdata symlink can't create issue 
+	if(!strcmp(subsystem,"block")&& !strcmp(kobject_name(kobj),"sda10"))
+	{
+		pr_err("kobject: '%s' (%p): %s: %s: %s "
+				"%d\n", kobject_name(kobj), kobj,
+				env->buf,devpath,subsystem, retval);
+	}
+	if(oppo_get_uevent_state() > 0 && uevent_print_cnt > 0) {
+		uevent_print_cnt --;
+		pr_err("kobject: '%s' (%p): %s: %s: %s "
+				"%d\n", kobject_name(kobj), kobj,
+				env->buf,devpath,subsystem, retval);
+
+	}
+       #endif
 
 	/* let the kset specific function add its stuff */
 	if (uevent_ops && uevent_ops->uevent) {
