@@ -78,6 +78,17 @@ struct listeners {
 	unsigned long		masks[0];
 };
 
+/* yanghao@BSP.Kernel.Stability for print when uevent buffer overflow */
+#ifdef VENDOR_EDIT
+static int oppo_uevent_over = 0;
+
+int oppo_get_uevent_state()
+{
+	return oppo_uevent_over;
+}
+EXPORT_SYMBOL(oppo_get_uevent_state);
+#endif
+
 /* state bits */
 #define NETLINK_S_CONGESTED		0x0
 
@@ -1388,6 +1399,13 @@ static int netlink_broadcast_deliver(struct sock *sk, struct sk_buff *skb)
 		__netlink_sendskb(sk, skb);
 		return atomic_read(&sk->sk_rmem_alloc) > (sk->sk_rcvbuf >> 1);
 	}
+	/* yanghao@BSP.Kernel.Stability for print when uevent buffer overflow */
+#ifdef VENDOR_EDIT
+	if(sk->sk_protocol == NETLINK_KOBJECT_UEVENT && (atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf) && (oppo_uevent_over == 0)) {
+		oppo_uevent_over = 1;
+		pr_info("oppo uevent send %d, recv %d\n", atomic_read(&sk->sk_rmem_alloc), sk->sk_rcvbuf);
+	}
+#endif
 	return -1;
 }
 
