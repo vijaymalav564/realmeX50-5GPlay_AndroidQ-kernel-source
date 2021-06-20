@@ -3767,6 +3767,10 @@ static void sched_update_updown_migrate_values(bool up)
 	}
 }
 
+#ifdef VENDOR_EDIT
+//cuixiaogang@SH.hypnus add for up/down migrate
+static DEFINE_MUTEX(mutex);
+#endif /* VENDOR_EDIT */
 int sched_updown_migrate_handler(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp,
 				loff_t *ppos)
@@ -3827,4 +3831,92 @@ unlock_mutex:
 
 	return ret;
 }
+
+#ifdef VENDOR_EDIT
+//cuixiaogang@SRC.hypnus.2018.07.11. add for change up/down migrate
+static int find_max_clusters(void)
+{
+		int cpu;
+		static int s_max_clusters = -1;
+
+		if (likely(s_max_clusters != -1))
+				goto out_find;
+
+		for (cpu = s_max_clusters = 0; cpu < num_possible_cpus();) {
+				cpu += cpumask_weight(topology_core_cpumask(cpu));
+				s_max_clusters++;
+		}
+
+	out_find:
+		return s_max_clusters;
+}
+
+int sched_get_updown_migrate(unsigned int *up_pct, unsigned int *down_pct)
+{
+		int i, max_clusters;
+
+		if (!up_pct || !down_pct) {
+				pr_err("%s: up_pct or down_pct is null\n", __func__);
+				return -EINVAL;
+		}
+
+		mutex_lock(&mutex);
+
+		max_clusters = find_max_clusters();
+		if (max_clusters <= 1) {
+				pr_err("%s: the value of max clusters is %d\n",
+						__func__, max_clusters);
+				mutex_unlock(&mutex);
+				return -EINVAL;
+		}
+
+		for (i = 0; i < max_clusters - 1; i++) {
+				up_pct[i] = SCHED_FIXEDPOINT_SCALE * 100
+						/ sysctl_sched_capacity_margin_up[i];
+				down_pct[i] = SCHED_FIXEDPOINT_SCALE * 100
+						/ sysctl_sched_capacity_margin_down[i];
+		}
+
+		mutex_unlock(&mutex);
+
+		return 0;
+}
+EXPORT_SYMBOL(sched_get_updown_migrate);
+
+int sched_set_updown_migrate(unsigned int *up_pct, unsigned int *down_pct)
+{
+		int i, max_clusters;
+
+		if (!up_pct || !down_pct) {
+				pr_err("%s: up_pct or down_pct is null\n", __func__);
+				return -EINVAL;
+		}
+
+		mutex_lock(&mutex);
+
+		max_clusters = find_max_clusters();
+		if (max_clusters <= 1) {
+				pr_err("%s: the value of max clusters is %d\n",
+						__func__, max_clusters);
+				mutex_unlock(&mutex);
+				return -EINVAL;
+		}
+
+		for (i = 0; i < max_clusters - 1; i++) {
+				sysctl_sched_capacity_margin_up[i]
+						= SCHED_FIXEDPOINT_SCALE * 100 / up_pct[i];
+				sysctl_sched_capacity_margin_down[i]
+						= SCHED_FIXEDPOINT_SCALE * 100 / down_pct[i];
+		}
+
+		sched_update_updown_migrate_values(true);
+
+		sched_update_updown_migrate_values(false);
+
+		mutex_unlock(&mutex);
+
+		return 0;
+}
+EXPORT_SYMBOL(sched_set_updown_migrate);
+#endif /* VENDOR_EDIT */
 #endif

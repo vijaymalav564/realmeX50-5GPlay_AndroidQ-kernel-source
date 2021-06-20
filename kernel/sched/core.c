@@ -25,6 +25,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 #if defined(CONFIG_SCHED_DEBUG) && defined(CONFIG_JUMP_LABEL)
@@ -3201,6 +3202,7 @@ void scheduler_tick(void)
 	trigger_load_balance(rq);
 #endif
 
+
 	rcu_read_lock();
 	grp = task_related_thread_group(curr);
 	if (update_preferred_cluster(grp, curr, old_load, true))
@@ -3639,6 +3641,7 @@ static void __sched notrace __schedule(bool preempt)
 		}
 		switch_count = &prev->nvcsw;
 	}
+
 
 	next = pick_next_task(rq, prev, &rf);
 	clear_tsk_need_resched(prev);
@@ -5039,10 +5042,8 @@ unsigned int sched_lib_mask_force;
 bool is_sched_lib_based_app(pid_t pid)
 {
 	const char *name = NULL;
-	char *libname, *lib_list;
 	struct vm_area_struct *vma;
 	char path_buf[LIB_PATH_LENGTH];
-	char tmp_lib_name[LIB_PATH_LENGTH];
 	bool found = false;
 	struct task_struct *p;
 	struct mm_struct *mm;
@@ -5074,15 +5075,10 @@ bool is_sched_lib_based_app(pid_t pid)
 			if (IS_ERR(name))
 				goto release_sem;
 
-			strlcpy(tmp_lib_name, sched_lib_name, LIB_PATH_LENGTH);
-			lib_list = tmp_lib_name;
-			while ((libname = strsep(&lib_list, ","))) {
-				libname = skip_spaces(libname);
-				if (strnstr(name, libname,
+			if (strnstr(name, sched_lib_name,
 					strnlen(name, LIB_PATH_LENGTH))) {
-					found = true;
-					goto release_sem;
-				}
+				found = true;
+				break;
 			}
 		}
 	}
@@ -6830,7 +6826,9 @@ void ia64_set_curr_task(int cpu, struct task_struct *p)
 {
 	cpu_curr(cpu) = p;
 }
+
 #endif
+
 
 #ifdef CONFIG_CGROUP_SCHED
 /* task_group_lock serializes the addition/removal of task groups */
@@ -7721,3 +7719,10 @@ void sched_exit(struct task_struct *p)
 #endif /* CONFIG_SCHED_WALT */
 
 __read_mostly bool sched_predl = 1;
+#ifdef VENDOR_EDIT
+/*fanhui@PhoneSW.BSP, 2016-06-23, get current task on one cpu*/
+struct task_struct *oppo_get_cpu_task(int cpu)
+{
+	return cpu_curr(cpu);
+}
+#endif

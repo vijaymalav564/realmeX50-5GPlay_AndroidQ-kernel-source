@@ -48,7 +48,9 @@
 
 #include "trace.h"
 #include "trace_output.h"
-
+#ifdef VENDOR_EDIT //tongfeng.huang@BSP.chg.Function, 2020/03/19, modified for trace log missing
+#include <soc/oppo/oppo_project.h>
+#endif /* VENDOR_EDIT */
 /*
  * On boot up, the ring buffer is set to the minimum size, so that
  * we do not waste memory on systems that are not using tracing.
@@ -7666,6 +7668,10 @@ rb_simple_write(struct file *filp, const char __user *ubuf,
 	struct ring_buffer *buffer = tr->trace_buffer.buffer;
 	unsigned long val;
 	int ret;
+	#ifdef VENDOR_EDIT
+	 //tongfeng.huang@BSP.chg.Function, 2020/03/19, modified for trace log missing
+	static unsigned long user_val = 0;
+	#endif
 
 	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
 	if (ret)
@@ -7673,9 +7679,24 @@ rb_simple_write(struct file *filp, const char __user *ubuf,
 
 	if (buffer) {
 		mutex_lock(&trace_types_lock);
+		#ifdef VENDOR_EDIT
+		 //tongfeng.huang@BSP.chg.Function, 2020/03/19, modified for trace log missing
+		if (get_eng_version() == AGING){
+			if(tracer_tracing_is_on(tr) &&  val ==0 ){
+				if (user_val != 3 ) {
+			  		mutex_unlock(&trace_types_lock);
+			 		return  cnt;
+			 	}
+			}
+		}
+		#endif
 		if (!!val == tracer_tracing_is_on(tr)) {
 			val = 0; /* do nothing */
 		} else if (val) {
+			#ifdef VENDOR_EDIT
+			 //tongfeng.huang@BSP.chg.Function, 2020/03/19, modified for trace log missing
+			user_val = val;
+			#endif
 			tracer_tracing_on(tr);
 			if (tr->current_trace->start)
 				tr->current_trace->start(tr);

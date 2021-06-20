@@ -78,6 +78,11 @@ static int notifier_call_chain(struct notifier_block **nl,
 	int ret = NOTIFY_DONE;
 	struct notifier_block *nb, *next_nb;
 
+#ifdef VENDOR_EDIT
+	int debug = 0;
+	if(v)
+		debug = *((int*)(v));
+#endif
 	nb = rcu_dereference_raw(*nl);
 
 	while (nb && nr_to_call) {
@@ -90,7 +95,17 @@ static int notifier_call_chain(struct notifier_block **nl,
 			continue;
 		}
 #endif
+
+#ifdef VENDOR_EDIT
+		if (debug == 0xaa55aa55)
+			 printk(KERN_ERR"kassey before %pF", nb->notifier_call);
+#endif
 		ret = nb->notifier_call(nb, val, v);
+
+#ifdef VENDOR_EDIT
+		if (debug == 0xaa55aa55)
+			 printk(KERN_ERR"kassey after %pF", nb->notifier_call);
+#endif
 
 		if (nr_calls)
 			(*nr_calls)++;
