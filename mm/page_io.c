@@ -77,7 +77,10 @@ static void swap_slot_free_notify(struct page *page)
 {
 	struct swap_info_struct *sis;
 	struct gendisk *disk;
+	#ifdef VENDOR_EDIT
+	/* tongfeng.Huang@BSP.CHG.Basic, 2020/03/02, merge CR2625507 */
 	swp_entry_t entry;
+	#endif
 
 	/*
 	 * There is no guarantee that the page is in swap cache - the software
@@ -109,11 +112,20 @@ static void swap_slot_free_notify(struct page *page)
 	 * we again wish to reclaim it.
 	 */
 	disk = sis->bdev->bd_disk;
+	#ifdef VENDOR_EDIT
+	/* tongfeng.Huang@BSP.CHG.Basic, 2020/03/02, merge CR2625507 */
 	entry.val = page_private(page);
 	if (disk->fops->swap_slot_free_notify &&
-			__swap_count(sis, entry) == 1) {
+		__swap_count(sis, entry) == 1) {
+	#else
+	//if (disk->fops->swap_slot_free_notify) {
+	//	swp_entry_t entry;
+	#endif
 		unsigned long offset;
-
+		#ifndef VENDOR_EDIT
+		/* tongfeng.Huang@BSP.CHG.Basic, 2020/03/02, merge CR2625507 */
+		//entry.val = page_private(page);
+		#endif
 		offset = swp_offset(entry);
 
 		SetPageDirty(page);
