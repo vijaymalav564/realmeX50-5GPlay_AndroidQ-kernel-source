@@ -62,6 +62,7 @@
 #include <asm/system_misc.h>
 #include <soc/qcom/minidump.h>
 
+#include <soc/qcom/scm.h>
 #include <soc/qcom/lpm_levels.h>
 
 #define CREATE_TRACE_POINTS
@@ -406,6 +407,7 @@ void __init smp_cpus_done(unsigned int max_cpus)
 	setup_cpu_features();
 	hyp_mode_check();
 	apply_alternatives_all();
+	scm_enable_mem_protection();
 	mark_linear_text_alias_ro();
 }
 
@@ -839,6 +841,9 @@ static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
 		pr_crit("CPU%u: stopping\n", cpu);
 		__show_regs(regs);
 		dump_stack();
+		#ifdef VENDOR_EDIT//Fanhong.Kong@ProDrv.CHG,add 2018/11/29 for minidump 4.19
+		dumpcpuregs(regs);
+		#endif
 		dump_stack_minidump(regs->sp);
 		raw_spin_unlock(&stop_lock);
 	}
