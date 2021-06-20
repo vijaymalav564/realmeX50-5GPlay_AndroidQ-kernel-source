@@ -642,11 +642,17 @@ exit:
 	/* announce disk after possible partitions are created */
 	dev_set_uevent_suppress(ddev, 0);
 	kobject_uevent(&ddev->kobj, KOBJ_ADD);
-
 	/* announce possible partitions */
 	disk_part_iter_init(&piter, disk, 0);
-	while ((part = disk_part_iter_next(&piter)))
+	while ((part = disk_part_iter_next(&piter))) {
 		kobject_uevent(&part_to_dev(part)->kobj, KOBJ_ADD);
+#ifdef VENDOR_EDIT
+		/* yanghao add for debug userdata link not create problem 2020-2-23 */
+		if(dev_name(part_to_dev(part)) &&
+				(!strncmp(dev_name(part_to_dev(part)),"sda", 3)))
+			pr_info("%s device %s\n", __func__, dev_name(part_to_dev(part)));
+#endif
+	}
 	disk_part_iter_exit(&piter);
 
 	err = sysfs_create_link(&ddev->kobj,

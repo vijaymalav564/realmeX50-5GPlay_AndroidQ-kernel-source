@@ -10,6 +10,10 @@
 
 #include "blk.h"
 
+#ifdef VENDOR_EDIT
+#include <trace/events/block.h>
+#endif
+
 /**
  * blk_queue_find_tag - find a request by its tag and queue
  * @q:	 The request queue for the device
@@ -289,6 +293,10 @@ void blk_queue_end_tag(struct request_queue *q, struct request *rq)
 	 * unlock memory barrier semantics.
 	 */
 	clear_bit_unlock(tag, bqt->tag_map);
+
+#ifdef VENDOR_EDIT
+	trace_oppo_ufs("blk_queue_end_tag", tag);
+#endif
 }
 
 /**
@@ -342,14 +350,24 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 			max_depth -= 2;
 		}
 		if (q->in_flight[BLK_RW_ASYNC] > max_depth)
+		{
+#ifdef VENDOR_EDIT
+			trace_oppo_ufs("req in_flight exceed max", (int)(q->in_flight[BLK_RW_ASYNC]));
+#endif
 			return 1;
+		}
 	}
 
 	do {
 		if (bqt->alloc_policy == BLK_TAG_ALLOC_FIFO) {
 			tag = find_first_zero_bit(bqt->tag_map, max_depth);
 			if (tag >= max_depth)
+			{
+#ifdef VENDOR_EDIT
+				trace_oppo_ufs("not found free tag bit", (int)(tag) );
+#endif
 				return 1;
+			}
 		} else {
 			int start = bqt->next_tag;
 			int size = min_t(int, bqt->max_depth, max_depth + start);
@@ -367,7 +385,9 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 	 * We need lock ordering semantics given by test_and_set_bit_lock.
 	 * See blk_queue_end_tag for details.
 	 */
-
+#ifdef VENDOR_EDIT
+	trace_oppo_ufs("blk_queue_start_tag", tag);
+#endif
 	bqt->next_tag = (tag + 1) % bqt->max_depth;
 	rq->rq_flags |= RQF_QUEUED;
 	rq->tag = tag;
