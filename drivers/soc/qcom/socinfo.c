@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2009-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2019, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -318,17 +318,20 @@ static struct msm_soc_info cpu_of_id[] = {
 
 	/* kona ID */
 	[356] = {MSM_CPU_KONA, "KONA"},
-
+#if defined(VENDOR_EDIT) && defined(CONFIG_CONFIDENTIAL_EUCLID_VERSION)
+/*Murphy@BSP.Kernel.Driver, 2019/04/19, Add for confidential version*/
 	/* Lito ID */
-	[400] = {MSM_CPU_LITO, "LITO"},
-
+	[400] = {MSM_CPU_LITO, "SDM730G AIE"},
+#else
+	/* Lito ID */
+	[400] = {MSM_CPU_LITO, "SDM765G 5G"},
+#endif
 	/* Bengal ID */
 	[417] = {MSM_CPU_BENGAL, "BENGAL"},
 	[444] = {MSM_CPU_BENGAL, "BENGAL"},
 
 	/* Lagoon ID */
 	[434] = {MSM_CPU_LAGOON, "LAGOON"},
-	[459] = {MSM_CPU_LAGOON, "LAGOON"},
 
 	/* Bengalp ID */
 	[445] = {MSM_CPU_BENGALP, "BENGALP"},

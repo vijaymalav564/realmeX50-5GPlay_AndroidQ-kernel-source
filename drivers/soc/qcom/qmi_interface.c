@@ -310,7 +310,6 @@ int qmi_txn_init(struct qmi_handle *qmi, struct qmi_txn *txn,
 	int ret;
 
 	memset(txn, 0, sizeof(*txn));
-
 	init_completion(&txn->completion);
 	txn->qmi = qmi;
 	txn->ei = ei;
@@ -345,6 +344,9 @@ int qmi_txn_wait(struct qmi_txn *txn, unsigned long timeout)
 	int ret;
 
 	ret = wait_for_completion_timeout(&txn->completion, timeout);
+	if (txn->result == -ENETRESET) {
+		return txn->result;
+	}
 
 	if (txn->result == -ENETRESET) {
 		return txn->result;
@@ -368,10 +370,16 @@ EXPORT_SYMBOL(qmi_txn_wait);
 void qmi_txn_cancel(struct qmi_txn *txn)
 {
 	struct qmi_handle *qmi = txn->qmi;
-
+#ifndef VENDOR_EDIT
+/* tongfeng,Huang@BSP.CHG.Basic, 2019/12/24, CR:2422984 2463072 2470638 */
 	mutex_lock(&qmi->txn_lock);
 	idr_remove(&qmi->txns, txn->id);
 	mutex_unlock(&qmi->txn_lock);
+#else
+	mutex_lock(&qmi->txn_lock);
+	idr_remove(&qmi->txns, txn->id);
+	mutex_unlock(&qmi->txn_lock);
+#endif
 }
 EXPORT_SYMBOL(qmi_txn_cancel);
 
@@ -609,7 +617,6 @@ static struct socket *qmi_sock_create(struct qmi_handle *qmi,
 
 	return sock;
 }
-
 /**
  * qmi_set_sndtimeo() - set the sk_sndtimeo of the qmi handle
  * @qmi:	QMI client handle
