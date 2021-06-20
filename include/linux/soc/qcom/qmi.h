@@ -168,7 +168,6 @@ struct qmi_txn {
 	struct qmi_handle *qmi;
 
 	u16 id;
-
 	struct completion completion;
 	int result;
 

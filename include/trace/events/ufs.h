@@ -289,6 +289,22 @@ TRACE_EVENT(ufshcd_upiu,
 	)
 );
 
+#ifdef VENDOR_EDIT
+TRACE_EVENT(ufs_scsi_block_rq,     
+		TP_PROTO(char *print_info),
+		TP_ARGS(print_info),
+		TP_STRUCT__entry(         
+			__string(print_info, print_info)     
+			),
+
+		TP_fast_assign(         
+			__assign_str(print_info, print_info);     
+			),
+
+		TP_printk("%s",         
+			__get_str(print_info))
+	   );
+#endif
 #endif /* if !defined(_TRACE_UFS_H) || defined(TRACE_HEADER_MULTI_READ) */
 
 /* This part must be outside protection */
