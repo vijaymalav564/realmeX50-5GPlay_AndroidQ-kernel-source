@@ -1836,12 +1836,6 @@ static inline void mmc_set_ios(struct mmc_host *host)
 				mmc_hostname(host), ios->old_rate / 1000,
 				ios->clock / 1000, jiffies_to_msecs(
 					(long)jiffies - (long)ios->clk_ts));
-			trace_mmc_clk(trace_info);
-			mmc_log_string(host,
-				"freq_KHz %d --> %d | t = %d",
-				ios->old_rate / 1000,
-				ios->clock / 1000, jiffies_to_msecs(
-					(long)jiffies - (long)ios->clk_ts));
 		}
 		ios->old_rate = ios->clock;
 		ios->clk_ts = jiffies;
@@ -3693,7 +3687,11 @@ void mmc_stop_host(struct mmc_host *host)
 	}
 
 	host->rescan_disable = 1;
+#ifndef VENDOR_EDIT //yixue.ge@bsp.drv modify
 	cancel_delayed_work_sync(&host->detect);
+#else
+	cancel_delayed_work(&host->detect);
+#endif
 
 	/* clear pm flags now and let card drivers set them as needed */
 	host->pm_flags = 0;
