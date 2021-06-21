@@ -39,6 +39,10 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+#ifdef VENDOR_EDIT
+#include <trace/events/block.h>
+#endif
+
 static struct kmem_cache *scsi_sdb_cache;
 static struct kmem_cache *scsi_sense_cache;
 static struct kmem_cache *scsi_sense_isadma_cache;
@@ -1908,7 +1912,12 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		req = blk_peek_request(q);
 		if (!req)
+		{
+#ifdef  VENDOR_EDIT
+			trace_oppo_ufs("blk_peek_request NULL", 0);
+#endif
 			break;
+		}
 
 		if (unlikely(!scsi_device_online(sdev))) {
 			sdev_printk(KERN_ERR, sdev,
@@ -1918,7 +1927,12 @@ static void scsi_request_fn(struct request_queue *q)
 		}
 
 		if (!scsi_dev_queue_ready(q, sdev))
+		{
+#ifdef  VENDOR_EDIT
+			trace_oppo_ufs("scsi_dev_queue_ready false", 0);
+#endif
 			break;
+		}
 
 		/*
 		 * Remove the request from the request list.
@@ -1946,6 +1960,9 @@ static void scsi_request_fn(struct request_queue *q)
 		 * a run when a tag is freed.
 		 */
 		if (blk_queue_tagged(q) && !(req->rq_flags & RQF_QUEUED)) {
+#ifdef  VENDOR_EDIT
+			trace_oppo_ufs("req->rq_flags RQF_QUEUED cleared", (int)(req->rq_flags));
+#endif
 			spin_lock_irq(shost->host_lock);
 			if (list_empty(&sdev->starved_entry))
 				list_add_tail(&sdev->starved_entry,
@@ -1955,10 +1972,20 @@ static void scsi_request_fn(struct request_queue *q)
 		}
 
 		if (!scsi_target_queue_ready(shost, sdev))
+		{
+#ifdef  VENDOR_EDIT
+			trace_oppo_ufs("scsi_target_queue_ready false", 1);
+#endif
 			goto not_ready;
+		}
 
 		if (!scsi_host_queue_ready(q, shost, sdev))
+		{
+#ifdef  VENDOR_EDIT
+			trace_oppo_ufs("scsi_host_queue_ready false", 0);
+#endif
 			goto host_not_ready;
+		}
 	
 		if (sdev->simple_tags)
 			cmd->flags |= SCMD_TAGGED;
