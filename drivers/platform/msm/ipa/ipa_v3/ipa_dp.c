@@ -5001,6 +5001,7 @@ start_poll:
 	}
 	cnt += weight - remain_aggr_weight * IPA_WAN_AGGR_PKT_CNT;
 	/* call repl_hdlr before napi_reschedule / napi_complete */
+
 	ep->sys->repl_hdlr(ep->sys);
 
 	/* When not able to replenish enough descriptors pipe wait

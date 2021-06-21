@@ -1508,11 +1508,6 @@ static void ipa3_q6_clnt_svc_arrive(struct work_struct *work)
 	int rc;
 	struct ipa_master_driver_init_complt_ind_msg_v01 ind;
 
-	if (unlikely(!ipa_q6_clnt)) {
-		IPAWANERR("Invalid q6 clnt.Ignore sending ind.\n");
-		return;
-	}
-
 	rc = kernel_connect(ipa_q6_clnt->sock,
 		(struct sockaddr *) &ipa3_qmi_ctx->server_sq,
 		sizeof(ipa3_qmi_ctx->server_sq),
@@ -1571,11 +1566,6 @@ static void ipa3_q6_clnt_svc_arrive(struct work_struct *work)
 			ipa_master_driver_init_complt_ind_msg_v01));
 		ind.master_driver_init_status.result =
 			IPA_QMI_RESULT_SUCCESS_V01;
-
-		if (unlikely(!ipa3_svc_handle)) {
-			IPAWANERR("Invalid svc handle.Ignore sending ind.\n");
-			return;
-		}
 
 		rc = qmi_send_indication(ipa3_svc_handle,
 			&ipa3_qmi_ctx->client_sq,
@@ -1712,7 +1702,6 @@ static struct qmi_msg_handler server_handlers[] = {
 		.decoded_size = sizeof(struct ipa_mhi_clk_vote_req_msg_v01),
 		.fn = ipa3_handle_mhi_vote_req,
 	},
-
 };
 
 /*  clinet_handlers are client callbacks that will be called from QMI context
