@@ -125,7 +125,10 @@ struct mtp_dev {
 
 	wait_queue_head_t read_wq;
 	wait_queue_head_t write_wq;
+#ifndef VENDOR_EDIT
+	//Kun.Zhang@BSP.CHG.Basic  2019/11/22  Modify for mtp/otg speed  cr#2558506
 	wait_queue_head_t intr_wq;
+#endif
 	struct usb_request *rx_req[RX_REQ_MAX];
 	int rx_done;
 
@@ -501,7 +504,10 @@ static void mtp_complete_intr(struct usb_ep *ep, struct usb_request *req)
 
 	mtp_req_put(dev, &dev->intr_idle, req);
 
+#ifndef VENDOR_EDIT
+		//Kun.Zhang@BSP.CHG.Basic  2019/11/22  Modify for mtp/otg speed  cr#2558506
 	wake_up(&dev->intr_wq);
+#endif
 }
 
 static int mtp_create_bulk_endpoints(struct mtp_dev *dev,
@@ -694,8 +700,10 @@ requeue_req:
 		r = xfer;
 		if (copy_to_user(buf, req->buf, xfer))
 			r = -EFAULT;
-	} else
+	} else{
 		r = -EIO;
+	}
+		
 
 done:
 	mutex_unlock(&dev->read_mutex);
@@ -1051,11 +1059,22 @@ static int mtp_send_event(struct mtp_dev *dev, struct mtp_event *event)
 	if (dev->state == STATE_OFFLINE)
 		return -ENODEV;
 
+#ifndef VENDOR_EDIT
+		//Kun.Zhang@BSP.CHG.Basic  2019/11/22  Modify for mtp/otg speed  cr#2558506
 	ret = wait_event_interruptible_timeout(dev->intr_wq,
 			(req = mtp_req_get(dev, &dev->intr_idle)),
 			msecs_to_jiffies(1000));
+#else
+	req = mtp_req_get(dev, &dev->intr_idle);
+#endif
+
 	if (!req)
+#ifndef VENDOR_EDIT
+				//Kun.Zhang@BSP.CHG.Basic  2019/11/22  Modify for mtp/otg speed  cr#2558506
 		return -ETIME;
+#else
+		return -EBUSY;
+#endif
 
 	if (copy_from_user(req->buf, (void __user *)event->data, length)) {
 		mtp_req_put(dev, &dev->intr_idle, req);
@@ -1484,7 +1503,6 @@ mtp_function_unbind(struct usb_configuration *c, struct usb_function *f)
 	fi_mtp = container_of(f->fi, struct mtp_instance, func_inst);
 	mtp_string_defs[INTERFACE_STRING_INDEX].id = 0;
 	mtp_log("dev: %pK\n", dev);
-
 	mutex_lock(&dev->read_mutex);
 	while ((req = mtp_req_get(dev, &dev->tx_idle)))
 		mtp_request_free(req, dev->ep_in);
@@ -1695,7 +1713,10 @@ static int __mtp_setup(struct mtp_instance *fi_mtp)
 	spin_lock_init(&dev->lock);
 	init_waitqueue_head(&dev->read_wq);
 	init_waitqueue_head(&dev->write_wq);
+#ifndef VENDOR_EDIT
+		//Kun.Zhang@BSP.CHG.Basic  2019/11/22  Modify for mtp/otg speed  cr#2558506
 	init_waitqueue_head(&dev->intr_wq);
+#endif
 	atomic_set(&dev->open_excl, 0);
 	atomic_set(&dev->ioctl_excl, 0);
 	INIT_LIST_HEAD(&dev->tx_idle);

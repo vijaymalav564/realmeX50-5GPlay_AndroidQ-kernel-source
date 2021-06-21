@@ -47,6 +47,13 @@
 #include "debug.h"
 #include "xhci.h"
 
+#ifdef VENDOR_EDIT
+	/* tongfeng.Huang@BSP.CHG.Basic, 2019/05/09,  Add for delay headset uevent */
+#include <linux/time.h>
+#include <linux/jiffies.h>
+#include <linux/sched/clock.h>
+#endif
+
 #define SDP_CONNETION_CHECK_TIME 10000 /* in ms */
 
 /* time out to wait for USB cable status notification (in ms)*/
@@ -95,30 +102,28 @@
 #define GSI_TRB_ADDR_BIT_53_MASK	(1 << 21)
 #define GSI_TRB_ADDR_BIT_55_MASK	(1 << 23)
 
-#define	GSI_GENERAL_CFG_REG(reg)	(QSCRATCH_REG_OFFSET + \
-						reg[GENERAL_CFG_REG])
+#define	GSI_GENERAL_CFG_REG(offset) (QSCRATCH_REG_OFFSET + offset)
 #define	GSI_RESTART_DBL_PNTR_MASK	BIT(20)
 #define	GSI_CLK_EN_MASK			BIT(12)
 #define	BLOCK_GSI_WR_GO_MASK		BIT(1)
 #define	GSI_EN_MASK			BIT(0)
 
-#define GSI_DBL_ADDR_L(reg, n)		(QSCRATCH_REG_OFFSET + \
-						reg[DBL_ADDR_L] + (n*4))
-#define GSI_DBL_ADDR_H(reg, n)		(QSCRATCH_REG_OFFSET + \
-						reg[DBL_ADDR_H] + (n*4))
-#define GSI_RING_BASE_ADDR_L(reg, n)	(QSCRATCH_REG_OFFSET + \
-						reg[RING_BASE_ADDR_L] + (n*4))
-#define GSI_RING_BASE_ADDR_H(reg, n)	(QSCRATCH_REG_OFFSET + \
-						reg[RING_BASE_ADDR_H] + (n*4))
+#define GSI_DBL_ADDR_L(offset, n)	((QSCRATCH_REG_OFFSET + offset) + (n*4))
+#define GSI_DBL_ADDR_H(offset, n)	((QSCRATCH_REG_OFFSET + offset) + (n*4))
+#define GSI_RING_BASE_ADDR_L(offset, n)	((QSCRATCH_REG_OFFSET + offset) + (n*4))
+#define GSI_RING_BASE_ADDR_H(offset, n)	((QSCRATCH_REG_OFFSET + offset) + (n*4))
 
-#define	GSI_IF_STS(reg)			(QSCRATCH_REG_OFFSET + reg[IF_STS])
+#define	GSI_IF_STS(offset)	(QSCRATCH_REG_OFFSET + offset)
 #define	GSI_WR_CTRL_STATE_MASK	BIT(15)
 
 #define DWC3_GEVNTCOUNT_EVNTINTRPTMASK		(1 << 31)
 #define DWC3_GEVNTADRHI_EVNTADRHI_GSI_EN(n)	(n << 22)
 #define DWC3_GEVNTADRHI_EVNTADRHI_GSI_IDX(n)	(n << 16)
 #define DWC3_GEVENT_TYPE_GSI			0x3
-
+#ifdef VENDOR_EDIT
+/* OuYangBaiLi@BSP.CHG.Basic,charging_bsp 2019/11/26,Add for charging_bsp */
+extern void oppo_set_otg_status(int status);
+#endif /* VENDOR_EDIT */
 enum usb_gsi_reg {
 	GENERAL_CFG_REG,
 	DBL_ADDR_L,
@@ -703,7 +708,7 @@ static int __dwc3_msm_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 	memset(trb_link, 0, sizeof(*trb_link));
 
 	trb_link->bpl = lower_32_bits(req->trb_dma);
-	trb_link->bph = upper_32_bits(req->trb_dma) | DBM_TRB_BIT |
+	trb_link->bph = DBM_TRB_BIT |
 			DBM_TRB_DMA | DBM_TRB_EP_NUM(dep->number);
 	trb_link->size = 0;
 	trb_link->ctrl = DWC3_TRBCTL_LINK_TRB | DWC3_TRB_CTRL_HWO;
@@ -712,7 +717,7 @@ static int __dwc3_msm_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 	 * Now start the transfer
 	 */
 	memset(&params, 0, sizeof(params));
-	params.param0 = upper_32_bits(req->trb_dma); /* TDAddr High */
+	params.param0 = 0; /* TDAddr High */
 	params.param1 = lower_32_bits(req->trb_dma); /* DAddr Low */
 
 	/* DBM requires IOC to be set */
@@ -961,8 +966,6 @@ static int gsi_startxfer_for_ep(struct usb_ep *ep)
 
 	memset(&params, 0, sizeof(params));
 	params.param0 = GSI_TRB_ADDR_BIT_53_MASK | GSI_TRB_ADDR_BIT_55_MASK;
-	params.param0 |= upper_32_bits(dwc3_trb_dma_offset(dep,
-						&dep->trb_pool[0]) & 0xffff);
 	params.param0 |= (ep->ep_intr_num << 16);
 	params.param1 = lower_32_bits(dwc3_trb_dma_offset(dep,
 						&dep->trb_pool[0]));
@@ -992,14 +995,9 @@ static void gsi_store_ringbase_dbl_info(struct usb_ep *ep,
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
 	int n = ep->ep_intr_num - 1;
 
-	dwc3_msm_write_reg(mdwc->base, GSI_RING_BASE_ADDR_L(mdwc->gsi_reg, n),
-		lower_32_bits(dwc3_trb_dma_offset(dep, &dep->trb_pool[0])));
-	dwc3_msm_write_reg(mdwc->base, GSI_RING_BASE_ADDR_H(mdwc->gsi_reg, n),
-		upper_32_bits(dwc3_trb_dma_offset(dep, &dep->trb_pool[0])));
-
-	dev_dbg(mdwc->dev, "Ring Base Addr %d: %x (LSB) %x (MSB)\n", n,
-		lower_32_bits(dwc3_trb_dma_offset(dep, &dep->trb_pool[0])),
-		upper_32_bits(dwc3_trb_dma_offset(dep, &dep->trb_pool[0])));
+	dwc3_msm_write_reg(mdwc->base,
+		GSI_RING_BASE_ADDR_L(mdwc->gsi_reg[RING_BASE_ADDR_L], (n)),
+		dwc3_trb_dma_offset(dep, &dep->trb_pool[0]));
 
 	if (!request->mapped_db_reg_phs_addr_lsb) {
 		request->mapped_db_reg_phs_addr_lsb =
@@ -1023,14 +1021,20 @@ static void gsi_store_ringbase_dbl_info(struct usb_ep *ep,
 	 * Replace dummy doorbell address with real one as IPA connection
 	 * is setup now and GSI must be ready to handle doorbell updates.
 	 */
-	dwc3_msm_write_reg(mdwc->base, GSI_DBL_ADDR_H(mdwc->gsi_reg, n),
-		upper_32_bits(request->mapped_db_reg_phs_addr_lsb));
+	dwc3_msm_write_reg_field(mdwc->base,
+			GSI_DBL_ADDR_H(mdwc->gsi_reg[DBL_ADDR_H], (n)),
+			~0x0, 0x0);
 
-	dwc3_msm_write_reg(mdwc->base, GSI_DBL_ADDR_L(mdwc->gsi_reg, n),
-		lower_32_bits(request->mapped_db_reg_phs_addr_lsb));
-
-	dev_dbg(mdwc->dev, "GSI DB Addr %d: %pa\n", n,
-		&request->mapped_db_reg_phs_addr_lsb);
+	dwc3_msm_write_reg(mdwc->base,
+		GSI_DBL_ADDR_L(mdwc->gsi_reg[DBL_ADDR_L], (n)),
+		(u32)request->mapped_db_reg_phs_addr_lsb);
+	dev_dbg(mdwc->dev, "Ring Base Addr %d: %x (LSB)\n", n,
+		dwc3_msm_read_reg(mdwc->base,
+			GSI_RING_BASE_ADDR_L(mdwc->gsi_reg[RING_BASE_ADDR_L],
+								(n))));
+	dev_dbg(mdwc->dev, "GSI DB Addr %d: %x (LSB)\n", n,
+		dwc3_msm_read_reg(mdwc->base,
+			GSI_DBL_ADDR_L(mdwc->gsi_reg[DBL_ADDR_L], (n))));
 }
 
 /**
@@ -1044,42 +1048,39 @@ static void gsi_ring_db(struct usb_ep *ep, struct usb_gsi_request *request)
 {
 	void __iomem *gsi_dbl_address_lsb;
 	void __iomem *gsi_dbl_address_msb;
-	dma_addr_t trb_dma;
+	dma_addr_t offset;
 	struct dwc3_ep *dep = to_dwc3_ep(ep);
 	struct dwc3	*dwc = dep->dwc;
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
 	int num_trbs = (dep->direction) ? (2 * (request->num_bufs) + 2)
 					: (request->num_bufs + 2);
 
-	gsi_dbl_address_lsb = ioremap_nocache(request->db_reg_phs_addr_lsb,
-				sizeof(u32));
+	gsi_dbl_address_lsb = devm_ioremap_nocache(mdwc->dev,
+				request->db_reg_phs_addr_lsb, sizeof(u32));
 	if (!gsi_dbl_address_lsb) {
-		dev_err(mdwc->dev, "Failed to map GSI DBL address LSB 0x%x\n",
-				request->db_reg_phs_addr_lsb);
+		dev_err(mdwc->dev, "Failed to get GSI DBL address LSB\n");
 		return;
 	}
 
-	gsi_dbl_address_msb = ioremap_nocache(request->db_reg_phs_addr_msb,
-				sizeof(u32));
+	gsi_dbl_address_msb = devm_ioremap_nocache(mdwc->dev,
+			request->db_reg_phs_addr_msb, sizeof(u32));
 	if (!gsi_dbl_address_msb) {
-		dev_err(mdwc->dev, "Failed to map GSI DBL address MSB 0x%x\n",
-				request->db_reg_phs_addr_msb);
-		iounmap(gsi_dbl_address_lsb);
+		dev_err(mdwc->dev, "Failed to get GSI DBL address MSB\n");
 		return;
 	}
 
-	trb_dma = dwc3_trb_dma_offset(dep, &dep->trb_pool[num_trbs-1]);
+	offset = dwc3_trb_dma_offset(dep, &dep->trb_pool[num_trbs-1]);
 	dev_dbg(mdwc->dev, "Writing link TRB addr: %pa to %pK (%x) for ep:%s\n",
-		&trb_dma, gsi_dbl_address_lsb, request->db_reg_phs_addr_lsb,
+		&offset, gsi_dbl_address_lsb, request->db_reg_phs_addr_lsb,
 		ep->name);
 
-	writel_relaxed(lower_32_bits(trb_dma), gsi_dbl_address_lsb);
-	readl_relaxed(gsi_dbl_address_lsb);
-	writel_relaxed(upper_32_bits(trb_dma), gsi_dbl_address_msb);
-	readl_relaxed(gsi_dbl_address_msb);
+	dbg_log_string("ep:%s link TRB addr:%pa db:%x\n",
+		ep->name, &offset, request->db_reg_phs_addr_lsb);
 
-	iounmap(gsi_dbl_address_lsb);
-	iounmap(gsi_dbl_address_msb);
+	writel_relaxed(offset, gsi_dbl_address_lsb);
+	readl_relaxed(gsi_dbl_address_lsb);
+	writel_relaxed(0, gsi_dbl_address_msb);
+	readl_relaxed(gsi_dbl_address_msb);
 }
 
 /**
@@ -1143,7 +1144,6 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 	size_t len;
 	unsigned long dma_attr;
 	dma_addr_t buffer_addr;
-	dma_addr_t trb0_dma;
 	struct dwc3_ep *dep = to_dwc3_ep(ep);
 	struct dwc3		*dwc = dep->dwc;
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
@@ -1186,8 +1186,6 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 		goto free_trb_buffer;
 	}
 
-	trb0_dma = dwc3_trb_dma_offset(dep, &dep->trb_pool[0]);
-
 	dep->num_trbs = num_trbs;
 	dma_get_sgtable(dwc->sysdev, &req->sgt_trb_xfer_ring, dep->trb_pool,
 		dep->trb_pool_dma, num_trbs * sizeof(struct dwc3_trb));
@@ -1219,7 +1217,7 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 
 			/* Setup n TRBs pointing to valid buffers */
 			trb->bpl = lower_32_bits(buffer_addr);
-			trb->bph = upper_32_bits(buffer_addr);
+			trb->bph = 0;
 			trb->size = 0;
 			trb->ctrl = DWC3_TRBCTL_NORMAL
 					| DWC3_TRB_CTRL_IOC;
@@ -1227,9 +1225,9 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 
 			/* Set up the Link TRB at the end */
 			if (i == (num_trbs - 1)) {
-				trb->bpl = lower_32_bits(trb0_dma);
-				trb->bph = upper_32_bits(trb0_dma & 0xffff);
-				trb->bph |= (1 << 23) | (1 << 21)
+				trb->bpl = dwc3_trb_dma_offset(dep,
+							&dep->trb_pool[0]);
+				trb->bph = (1 << 23) | (1 << 21)
 						| (ep->ep_intr_num << 16);
 				trb->size = 0;
 				trb->ctrl = DWC3_TRBCTL_LINK_TRB
@@ -1244,22 +1242,19 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 			memset(trb, 0, sizeof(*trb));
 			/* Setup LINK TRB to start with TRB ring */
 			if (i == 0) {
-				trb->bpl =
-					lower_32_bits(trb0_dma + sizeof(*trb));
-				trb->bph =
-					upper_32_bits(trb0_dma + sizeof(*trb));
+				trb->bpl = dwc3_trb_dma_offset(dep,
+							&dep->trb_pool[1]);
 				trb->ctrl = DWC3_TRBCTL_LINK_TRB;
 			} else if (i == (num_trbs - 1)) {
 				/* Set up the Link TRB at the end */
-				trb->bpl = lower_32_bits(trb0_dma);
-				trb->bph = upper_32_bits(trb0_dma & 0xffff);
-				trb->bph |= (1 << 23) | (1 << 21)
+				trb->bpl = dwc3_trb_dma_offset(dep,
+						&dep->trb_pool[0]);
+				trb->bph = (1 << 23) | (1 << 21)
 						| (ep->ep_intr_num << 16);
 				trb->ctrl = DWC3_TRBCTL_LINK_TRB
 						| DWC3_TRB_CTRL_HWO;
 			} else {
 				trb->bpl = lower_32_bits(buffer_addr);
-				trb->bph = upper_32_bits(buffer_addr);
 				trb->size = req->buf_len;
 				buffer_addr += req->buf_len;
 				trb->ctrl = DWC3_TRBCTL_NORMAL
@@ -1350,12 +1345,16 @@ static void gsi_configure_ep(struct usb_ep *ep, struct usb_gsi_request *request)
 	int ret;
 
 	/* setup dummy doorbell as IPA connection isn't setup yet */
-	dwc3_msm_write_reg(mdwc->base, GSI_DBL_ADDR_H(mdwc->gsi_reg, n),
-			upper_32_bits(mdwc->dummy_gsi_db_dma));
-	dwc3_msm_write_reg(mdwc->base, GSI_DBL_ADDR_L(mdwc->gsi_reg, n),
-			lower_32_bits(mdwc->dummy_gsi_db_dma));
-	dev_dbg(mdwc->dev, "Dummy DB Addr %pK: %llx\n",
-		&mdwc->dummy_gsi_db, mdwc->dummy_gsi_db_dma);
+	dwc3_msm_write_reg_field(mdwc->base,
+			GSI_DBL_ADDR_H(mdwc->gsi_reg[DBL_ADDR_H], (n)),
+			~0x0, (u32)((u64)mdwc->dummy_gsi_db_dma >> 32));
+
+	dwc3_msm_write_reg_field(mdwc->base,
+			GSI_DBL_ADDR_L(mdwc->gsi_reg[DBL_ADDR_L], (n)),
+			~0x0, (u32)mdwc->dummy_gsi_db_dma);
+	dev_dbg(mdwc->dev, "Dummy DB Addr %pK: %llx %llx (LSB)\n",
+		&mdwc->dummy_gsi_db, mdwc->dummy_gsi_db_dma,
+		(u32)mdwc->dummy_gsi_db_dma);
 
 	memset(&params, 0x00, sizeof(params));
 
@@ -1434,14 +1433,18 @@ static void gsi_enable(struct usb_ep *ep)
 	struct dwc3 *dwc = dep->dwc;
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
 
-	dwc3_msm_write_reg_field(mdwc->base, GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+	dwc3_msm_write_reg_field(mdwc->base,
+		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		GSI_CLK_EN_MASK, 1);
-	dwc3_msm_write_reg_field(mdwc->base, GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+	dwc3_msm_write_reg_field(mdwc->base,
+		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		GSI_RESTART_DBL_PNTR_MASK, 1);
-	dwc3_msm_write_reg_field(mdwc->base, GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+	dwc3_msm_write_reg_field(mdwc->base,
+		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		GSI_RESTART_DBL_PNTR_MASK, 0);
 	dev_dbg(mdwc->dev, "%s: Enable GSI\n", __func__);
-	dwc3_msm_write_reg_field(mdwc->base, GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+	dwc3_msm_write_reg_field(mdwc->base,
+		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		GSI_EN_MASK, 1);
 }
 
@@ -1461,7 +1464,8 @@ static void gsi_set_clear_dbell(struct usb_ep *ep,
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
 
 	dbg_log_string("block_db(%d)", block_db);
-	dwc3_msm_write_reg_field(mdwc->base, GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+	dwc3_msm_write_reg_field(mdwc->base,
+		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		BLOCK_GSI_WR_GO_MASK, block_db);
 }
 
@@ -1475,7 +1479,7 @@ static bool gsi_check_ready_to_suspend(struct dwc3_msm *mdwc)
 	u32	timeout = 1500;
 
 	while (dwc3_msm_read_reg_field(mdwc->base,
-		GSI_IF_STS(mdwc->gsi_reg), GSI_WR_CTRL_STATE_MASK)) {
+		GSI_IF_STS(mdwc->gsi_reg[IF_STS]), GSI_WR_CTRL_STATE_MASK)) {
 		if (!timeout--) {
 			dev_err(mdwc->dev,
 			"Unable to suspend GSI ch. WR_CTRL_STATE != 0\n");
@@ -2098,7 +2102,6 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned int event,
 			dwc3_writel(dwc->regs, DWC3_GEVNTADRLO((i+1)),
 				lower_32_bits(evt->dma));
 			dwc3_writel(dwc->regs, DWC3_GEVNTADRHI((i+1)),
-				(upper_32_bits(evt->dma) & 0xffff) |
 				DWC3_GEVNTADRHI_EVNTADRHI_GSI_EN(
 				DWC3_GEVENT_TYPE_GSI) |
 				DWC3_GEVNTADRHI_EVNTADRHI_GSI_IDX((i+1)));
@@ -2163,7 +2166,7 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned int event,
 	case DWC3_CONTROLLER_NOTIFY_CLEAR_DB:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_NOTIFY_CLEAR_DB\n");
 		dwc3_msm_write_reg_field(mdwc->base,
-			GSI_GENERAL_CFG_REG(mdwc->gsi_reg),
+			GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 			BLOCK_GSI_WR_GO_MASK, true);
 		break;
 	default:
@@ -2593,6 +2596,8 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc, bool force_power_collapse)
 	clk_disable_unprepare(mdwc->xo_clk);
 
 	/* Perform controller power collapse */
+	#ifdef VENDOR_EDIT
+	/*YanGang@BSP.CHG.BASIC,2019/11/27,add for don't make host suspend ,CR2531867*/
 	if (!(mdwc->in_host_mode || mdwc->in_device_mode) ||
 	      mdwc->in_restart || force_power_collapse) {
 		mdwc->lpm_flags |= MDWC3_POWER_COLLAPSE;
@@ -2603,8 +2608,18 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc, bool force_power_collapse)
 		dev_dbg(mdwc->dev, "Collapse GDSC in host mode bus suspend\n");
 		dwc3_msm_config_gdsc(mdwc, 0);
 	}
-
-
+	#else
+	if (!(mdwc->in_host_mode || mdwc->in_device_mode) ||
+	      mdwc->in_restart || force_power_collapse) {
+		mdwc->lpm_flags |= MDWC3_POWER_COLLAPSE;
+		dev_dbg(mdwc->dev, "%s: power collapse\n", __func__);
+		dwc3_msm_config_gdsc(mdwc, 0);
+		clk_disable_unprepare(mdwc->sleep_clk);
+	} else if (dwc->gdsc_collapse_in_host_suspend && mdwc->in_host_mode) {
+		dev_dbg(mdwc->dev, "Collapse GDSC in host mode bus suspend\n");
+		dwc3_msm_config_gdsc(mdwc, 0);
+	}
+	#endif
 	dwc3_msm_update_bus_bw(mdwc, BUS_VOTE_NONE);
 
 	/*
@@ -2831,6 +2846,10 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
  */
 static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 {
+#ifdef VENDOR_EDIT
+	/* tongfeng.Huang@BSP.CHG.Basic, 2019/05/09,  Add for delay headset uevent */
+	static unsigned long long t = 0;
+#endif
 	/* Flush processing any pending events before handling new ones */
 	flush_delayed_work(&mdwc->sm_work);
 
@@ -2858,7 +2877,19 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 		clear_bit(B_SUSPEND, &mdwc->inputs);
 	}
 
-	queue_delayed_work(mdwc->sm_usb_wq, &mdwc->sm_work, 0);
+#ifdef VENDOR_EDIT
+	/* tongfeng.Huang@BSP.CHG.Basic, 2019/05/09,  Add for delay headset uevent */
+	if(t <= 12)
+		t = cpu_clock(smp_processor_id())/1000000000;//convert to s
+
+	dev_dbg(mdwc->dev, "last_secs %lu\n",t);
+	if(t<=12)
+		queue_delayed_work(mdwc->sm_usb_wq, &mdwc->sm_work, msecs_to_jiffies(5000));
+	else
+		queue_delayed_work(mdwc->sm_usb_wq, &mdwc->sm_work, 0);
+#else
+		queue_delayed_work(mdwc->sm_usb_wq, &mdwc->sm_work, 0);
+#endif
 }
 
 static void dwc3_resume_work(struct work_struct *w)
@@ -4109,6 +4140,11 @@ static void msm_dwc3_perf_vote_work(struct work_struct *w)
  *
  * Returns 0 on success otherwise negative errno.
  */
+#ifdef VENDOR_EDIT
+/* OuYangBaiLi@BSP.CHG.Basic,charging_bsp 2019/11/26,Add for charging_bsp */
+#define OTG_STATUS_HIGH	1
+#define OTG_STATUS_LOW	0
+#endif /* VENDOR_EDIT */
 static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 {
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
@@ -4132,6 +4168,10 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 	}
 
 	if (on) {
+		#ifdef VENDOR_EDIT
+		/* OuYangBaiLi@BSP.CHG.Basic,charging_bsp 2019/11/26,Add for charging_bsp */
+		oppo_set_otg_status(OTG_STATUS_HIGH);
+		#endif /* VENDOR_EDIT */
 		dev_dbg(mdwc->dev, "%s: turn on host\n", __func__);
 
 		mdwc->hs_phy->flags |= PHY_HOST_MODE;
@@ -4156,6 +4196,10 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 				atomic_read(&mdwc->dev->power.usage_count));
 			return ret;
 		}
+#ifdef VENDOR_EDIT
+/* Jianchao.Shi@BSP.CHG.Basic, 2017/02/18, sjc Add for OTG sw */
+		pr_err("[OPPO_CHG][%s]OTG regulator_enable\n",__func__);
+#endif
 
 
 		mdwc->host_nb.notifier_call = dwc3_msm_host_notifier;
@@ -4225,6 +4269,10 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 			dev_err(mdwc->dev, "unable to disable vbus_reg\n");
 			return ret;
 		}
+#ifdef VENDOR_EDIT
+/* Jianchao.Shi@BSP.CHG.Basic, 2017/02/18, sjc Add for OTG sw */
+		pr_err("[OPPO_CHG][%s] OTG disable_regulator\n",__func__);
+#endif
 
 		cancel_delayed_work_sync(&mdwc->perf_vote_work);
 		msm_dwc3_perf_vote_update(mdwc, false);
@@ -4239,7 +4287,10 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 					USB_SPEED_SUPER);
 			mdwc->ss_phy->flags &= ~PHY_HOST_MODE;
 		}
-
+		#ifdef VENDOR_EDIT
+		/* OuYangBaiLi@BSP.CHG.Basic,charging_bsp 2019/11/26,Add for charging_bsp */
+		oppo_set_otg_status(OTG_STATUS_LOW);
+		#endif /* VENDOR_EDIT */
 		mdwc->hs_phy->flags &= ~PHY_HOST_MODE;
 		dwc3_host_exit(dwc);
 		usb_unregister_notify(&mdwc->host_nb);
@@ -4448,6 +4499,16 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 	if (mdwc->max_power == mA || psy_type != POWER_SUPPLY_TYPE_USB)
 		return 0;
 
+#ifdef VENDOR_EDIT
+	/* Jianchao.Shi@BSP.CHG.Basic, 2017/05/04, sjc Add for charging */
+	dev_info(mdwc->dev, "Avail curr from USB = %u, pre max_power = %u\n", mA, mdwc->max_power);
+	if (mA == 0 || mA == 2) {
+		return 0;
+	}
+#else
+	dev_info(mdwc->dev, "Avail curr from USB = %u\n", mA);
+#endif
+
 	/* Set max current limit in uA */
 	pval.intval = 1000 * mA;
 
@@ -4464,6 +4525,11 @@ set_prop:
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+/*LiYue@BSP.CHG.Basic, 2019/08/14, add for support cdp charging*/
+#define DWC3_DCTL 0xc704
+#define DWC3_DCTL_RUN_STOP BIT(31)
+#endif
 
 /**
  * dwc3_otg_sm_work - workqueue function.
@@ -4549,6 +4615,18 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 				atomic_read(&mdwc->dev->power.usage_count));
 			dwc3_otg_start_peripheral(mdwc, 1);
 			mdwc->drd_state = DRD_STATE_PERIPHERAL;
+#ifdef VENDOR_EDIT
+			/*LiYue@BSP.CHG.Basic, 2019/08/14, add for support cdp charging*/
+			if(!dwc->softconnect && get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB_CDP) {
+				u32 reg;
+				dbg_event(0xFF, "cdp pullup dp", 0);
+
+				reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+				reg |= DWC3_DCTL_RUN_STOP;
+				dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+				break;
+			}
+#endif
 			work = 1;
 		} else {
 			dwc3_msm_gadget_vbus_draw(mdwc, 0);
