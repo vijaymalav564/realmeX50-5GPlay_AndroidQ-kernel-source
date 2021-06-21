@@ -406,6 +406,7 @@ static int qmp_send_data(struct mbox_chan *chan, void *data)
 		if (chan == &mbox->ctrl.chans[i])
 			mbox->idx_in_flight = i;
 	}
+	/* readback to ensure write reflects in msgram */
 	QMP_INFO(mdev->ilc, "Copied buffer to msgram sz:%d i:%d\n",
 		 size, mbox->idx_in_flight);
 	send_irq(mdev);
