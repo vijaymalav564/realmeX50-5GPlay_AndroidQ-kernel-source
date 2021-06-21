@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -1521,7 +1521,6 @@ static void gpi_process_imed_data_event(struct gpii_chan *gpii_chan,
 		else
 			return;
 	}
-
 	tx_cb_param = vd->tx.callback_param;
 	if (vd->tx.callback && tx_cb_param) {
 		struct msm_gpi_tre *imed_tre = &tx_cb_param->imed_tre;
@@ -2363,7 +2362,11 @@ struct dma_async_tx_descriptor *gpi_prep_slave_sg(struct dma_chan *chan,
 		tre = sg_virt(sg);
 
 		/* Check if last tre has ieob set */
+#ifdef VENDOR_EDIT //Cong.Dai@PSW.BSP.TP. 2020.02.28, CR2628456 ,add for fix gpi_desc memleak issue
+		if (sg_len != 1 && i == sg_len - 1) {
+#else
 		if (i == sg_len - 1) {
+#endif /*VENDOR_EDIT*/
 			if ((((struct msm_gpi_tre *)tre)->dword[3] &
 					GPI_IEOB_BMSK) >> GPI_IEOB_BMSK_SHIFT)
 				gpii->ieob_set = true;
