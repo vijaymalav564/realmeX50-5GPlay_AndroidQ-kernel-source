@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -11,6 +11,7 @@
 #include <linux/cpu.h>
 #include <linux/cpu_pm.h>
 #include <linux/interrupt.h>
+#include <linux/notifier.h>
 #include <linux/of_irq.h>
 
 #include <asm/cputype.h>
@@ -56,6 +57,7 @@ module_param(poll_msec, int, 0444);
 #define EDAC_CPU	"kryo_edac"
 
 #define KRYO_ERRXSTATUS_VALID(a)	((a >> 30) & 0x1)
+#define KRYO_ERRXSTATUS_DE(a)	((a >> 23) & 0x1)
 #define KRYO_ERRXSTATUS_UE(a)	((a >> 29) & 0x1)
 #define KRYO_ERRXSTATUS_SERR(a)	(a & 0xFF)
 
@@ -136,6 +138,7 @@ struct erp_drvdata {
 	struct edac_device_ctl_info *edev_ctl;
 	struct erp_drvdata __percpu **erp_cpu_drvdata;
 	struct notifier_block nb_pm;
+	struct notifier_block nb_panic;
 	int ppi;
 };
 
@@ -301,7 +304,8 @@ static void kryo_parse_l1_l2_cache_error(u64 errxstatus, u64 errxmisc,
 
 	switch (level) {
 	case L1:
-		if (KRYO_ERRXSTATUS_UE(errxstatus))
+		if (KRYO_ERRXSTATUS_UE(errxstatus) ||
+		    KRYO_ERRXSTATUS_DE(errxstatus))
 			dump_err_reg(KRYO_L1_UE, level, errxstatus, errxmisc,
 					edev_ctl);
 		else
@@ -309,7 +313,8 @@ static void kryo_parse_l1_l2_cache_error(u64 errxstatus, u64 errxmisc,
 					edev_ctl);
 		break;
 	case L2:
-		if (KRYO_ERRXSTATUS_UE(errxstatus))
+		if (KRYO_ERRXSTATUS_UE(errxstatus) ||
+		    KRYO_ERRXSTATUS_DE(errxstatus))
 			dump_err_reg(KRYO_L2_UE, level, errxstatus, errxmisc,
 					edev_ctl);
 		else
@@ -403,6 +408,21 @@ void kryo_poll_cache_errors(struct edac_device_ctl_info *edev_ctl)
 			edev_ctl, 0);
 }
 
+static int kryo_cpu_panic_notify(struct notifier_block *this,
+				unsigned long event, void *ptr)
+{
+	struct edac_device_ctl_info *edev_ctl =
+				panic_handler_drvdata->edev_ctl;
+
+	edev_ctl->panic_on_ce = 0;
+	edev_ctl->panic_on_ue = 0;
+
+	kryo_check_l3_scu_error(edev_ctl);
+	kryo_check_l1_l2_ecc(edev_ctl);
+
+	return NOTIFY_OK;
+}
+
 static irqreturn_t kryo_l1_l2_handler(int irq, void *drvdata)
 {
 	kryo_check_l1_l2_ecc(panic_handler_drvdata->edev_ctl);
@@ -488,6 +508,9 @@ static int kryo_cpu_erp_probe(struct platform_device *pdev)
 	drv->edev_ctl->panic_on_ce = ARM64_ERP_PANIC_ON_CE;
 	drv->edev_ctl->panic_on_ue = ARM64_ERP_PANIC_ON_UE;
 	drv->nb_pm.notifier_call = kryo_pmu_cpu_pm_notify;
+	drv->nb_panic.notifier_call = kryo_cpu_panic_notify;
+	atomic_notifier_chain_register(&panic_notifier_list,
+				       &drv->nb_panic);
 	platform_set_drvdata(pdev, drv);
 
 	rc = edac_device_add_device(drv->edev_ctl);
