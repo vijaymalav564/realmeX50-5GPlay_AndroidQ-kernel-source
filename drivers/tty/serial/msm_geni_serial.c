@@ -23,6 +23,11 @@
 #include <linux/tty_flip.h>
 #include <linux/ioctl.h>
 #include <linux/pinctrl/consumer.h>
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for  close console in user version
+#include <soc/oppo/boot_mode.h>
+#endif /* VENDOR_EDIT */
+
 #include <linux/dma-mapping.h>
 
 /* UART specific GENI registers */
@@ -115,7 +120,7 @@
 #define WAIT_XFER_MIN_TIMEOUT_US	(9000)
 #define IPC_LOG_PWR_PAGES	(6)
 #define IPC_LOG_MISC_PAGES	(10)
-#define IPC_LOG_TX_RX_PAGES	(10)
+#define IPC_LOG_TX_RX_PAGES	(8)
 #define DATA_BYTES_PER_LINE	(32)
 
 #define IPC_LOG_MSG(ctx, x...) do { \
@@ -180,6 +185,10 @@ struct msm_geni_serial_port {
 
 static const struct uart_ops msm_geni_serial_pops;
 static struct uart_driver msm_geni_console_driver;
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in use version
+static struct uart_driver msm_geni_console_driver_no_cons;
+#endif
 static struct uart_driver msm_geni_serial_hs_driver;
 static int handle_rx_console(struct uart_port *uport,
 			unsigned int rx_fifo_wc,
@@ -210,6 +219,38 @@ static int uart_line_id;
 static struct msm_geni_serial_port msm_geni_console_port;
 static struct msm_geni_serial_port msm_geni_serial_ports[GENI_UART_NR_PORTS];
 
+#ifdef VENDOR_EDIT
+//Jiaochao.Shi@BSP.CHG.Basic 2018/05/01 add for console
+static struct pinctrl *serial_pinctrl = NULL;
+static struct pinctrl_state *serial_pinctrl_state_disable = NULL;
+#endif
+
+#ifdef VENDOR_EDIT
+int oppo_uart_disable = 0;
+static int __init get_oppo_uart_disable(char *str)
+{
+	oppo_uart_disable = simple_strtol(str,NULL,0);
+	return 1;
+}
+__setup("printk.disable_uart=", get_oppo_uart_disable);
+
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in use version
+bool boot_with_console(void)
+{
+	if(get_boot_mode() == MSM_BOOT_MODE__FACTORY)
+	{
+		return true;
+	}
+
+	if(oppo_uart_disable)
+	{
+		return false;
+	} else {
+		return true;
+	}
+}
+EXPORT_SYMBOL(boot_with_console);
+#endif/*VENDOR_EDIT*/
 static void msm_geni_serial_config_port(struct uart_port *uport, int cfg_flags)
 {
 	if (cfg_flags & UART_CONFIG_TYPE)
@@ -729,6 +770,12 @@ __msm_geni_serial_console_write(struct uart_port *uport, const char *s,
 	int fifo_depth = DEF_FIFO_DEPTH_WORDS;
 	int tx_wm = DEF_TX_WM;
 
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in user version
+	if (boot_with_console() == false) {
+		return;
+	}
+#endif
 	for (i = 0; i < count; i++) {
 		if (s[i] == '\n')
 			new_line++;
@@ -775,6 +822,13 @@ static void msm_geni_serial_console_write(struct console *co, const char *s,
 	unsigned long flags;
 	unsigned int geni_status;
 	int irq_en;
+
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in user version
+	if (boot_with_console() == false) {
+		return;
+	}
+#endif
 
 	/* Max 1 port supported as of now */
 	WARN_ON(co->index < 0 || co->index >= GENI_UART_CONS_PORTS);
@@ -864,18 +918,8 @@ static int handle_rx_console(struct uart_port *uport,
 				tty_insert_flip_char(tport, rx_char[c], flag);
 		}
 	}
-	if (!drop_rx) {
-		/*
-		 * Driver acquiring port->lock in isr function and calling
-		 * tty_flip_buffer_push() which in turn will wait for
-		 * another lock from framework __queue_work function.
-		 * release the port lock before calling tty_flip_buffer_push()
-		 * to avoid deadlock scenarios.
-		 */
-		spin_unlock(&uport->lock);
+	if (!drop_rx)
 		tty_flip_buffer_push(tport);
-		spin_lock(&uport->lock);
-	}
 	return 0;
 }
 #else
@@ -895,8 +939,6 @@ static int msm_geni_serial_prep_dma_tx(struct uart_port *uport)
 	struct msm_geni_serial_port *msm_port = GET_DEV_PORT(uport);
 	struct circ_buf *xmit = &uport->state->xmit;
 	unsigned int xmit_size;
-	u32 geni_status;
-	bool done = false;
 	int ret = 0;
 
 	xmit_size = uart_circ_chars_pending(xmit);
@@ -916,39 +958,25 @@ static int msm_geni_serial_prep_dma_tx(struct uart_port *uport)
 			&xmit->buf[xmit->tail], xmit_size, &msm_port->tx_dma);
 	if (!ret) {
 		msm_port->xmit_size = xmit_size;
-		return ret;
-	}
-
-	IPC_LOG_MSG(msm_port->ipc_log_misc,
-		    "%s: TX DMA map Fail %d\n", __func__, ret);
-	geni_write_reg_nolog(0, uport->membase,
-				SE_UART_TX_TRANS_LEN);
-	geni_cancel_m_cmd(uport->membase);
-	if (!msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
-					M_CMD_CANCEL_EN, true)) {
-		geni_status = geni_read_reg_nolog(uport->membase,
-						  SE_GENI_STATUS);
-		IPC_LOG_MSG(msm_port->ipc_log_misc,
-			    "%s: TX Cancel Fail 0x%x\n",
-			    __func__, geni_status);
-		geni_abort_m_cmd(uport->membase);
-		done = msm_geni_serial_poll_bit(uport,
-			SE_GENI_M_IRQ_STATUS, M_CMD_ABORT_EN, true);
-		if (!done) {
-			geni_status =
-				geni_read_reg_nolog(uport->membase,
-						    SE_GENI_STATUS);
-			IPC_LOG_MSG(msm_port->ipc_log_misc,
-				    "%s: TX Abort fail 0x%x\n",
-				    __func__, geni_status);
+	} else {
+		geni_write_reg_nolog(0, uport->membase,
+					SE_UART_TX_TRANS_LEN);
+		geni_cancel_m_cmd(uport->membase);
+		if (!msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
+						M_CMD_CANCEL_EN, true)) {
+			geni_abort_m_cmd(uport->membase);
+			msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
+							M_CMD_ABORT_EN, true);
+			geni_write_reg_nolog(M_CMD_ABORT_EN, uport->membase,
+							SE_GENI_M_IRQ_CLEAR);
 		}
-		geni_write_reg_nolog(M_CMD_ABORT_EN, uport->membase,
-						SE_GENI_M_IRQ_CLEAR);
+		geni_write_reg_nolog(M_CMD_CANCEL_EN, uport->membase,
+							SE_GENI_M_IRQ_CLEAR);
+		IPC_LOG_MSG(msm_port->ipc_log_tx, "%s: DMA map failure %d\n",
+								__func__, ret);
+		msm_port->tx_dma = (dma_addr_t)NULL;
+		msm_port->xmit_size = 0;
 	}
-	geni_write_reg_nolog(M_CMD_CANCEL_EN, uport->membase,
-						SE_GENI_M_IRQ_CLEAR);
-	msm_port->tx_dma = (dma_addr_t)NULL;
-	msm_port->xmit_size = 0;
 	return ret;
 }
 
@@ -1035,7 +1063,6 @@ static void stop_tx_sequencer(struct uart_port *uport)
 	unsigned int geni_m_irq_en;
 	unsigned int geni_status;
 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
-	bool done = false;
 
 	geni_m_irq_en = geni_read_reg_nolog(uport->membase, SE_GENI_M_IRQ_EN);
 	geni_m_irq_en &= ~M_CMD_DONE_EN;
@@ -1059,26 +1086,12 @@ static void stop_tx_sequencer(struct uart_port *uport)
 	if (!(geni_status & M_GENI_CMD_ACTIVE))
 		return;
 
-	IPC_LOG_MSG(port->ipc_log_misc,
-		    "%s: Start GENI: 0x%x\n", __func__, geni_status);
-
 	geni_cancel_m_cmd(uport->membase);
 	if (!msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
 						M_CMD_CANCEL_EN, true)) {
-		geni_status = geni_read_reg_nolog(uport->membase,
-						  SE_GENI_STATUS);
-		IPC_LOG_MSG(port->ipc_log_misc,
-			    "%s: TX Cancel Fail 0x%x\n", __func__, geni_status);
 		geni_abort_m_cmd(uport->membase);
-		done = msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
-					       M_CMD_ABORT_EN, true);
-		if (!done) {
-			geni_status = geni_read_reg_nolog(uport->membase,
-							  SE_GENI_STATUS);
-			IPC_LOG_MSG(port->ipc_log_misc,
-				    "%s TX Abort fail 0x%x\n",
-				    __func__, geni_status);
-		}
+		msm_geni_serial_poll_bit(uport, SE_GENI_M_IRQ_STATUS,
+						M_CMD_ABORT_EN, true);
 		geni_write_reg_nolog(M_CMD_ABORT_EN, uport->membase,
 							SE_GENI_M_IRQ_CLEAR);
 	}
@@ -1095,9 +1108,7 @@ static void stop_tx_sequencer(struct uart_port *uport)
 		IPC_LOG_MSG(port->ipc_log_misc, "%s:Removing vote\n", __func__);
 		msm_geni_serial_power_off(uport);
 	}
-	geni_status = geni_read_reg_nolog(uport->membase, SE_GENI_STATUS);
-	IPC_LOG_MSG(port->ipc_log_misc, "%s: End GENI:0x%x\n",
-		    __func__, geni_status);
+	IPC_LOG_MSG(port->ipc_log_misc, "%s:\n", __func__);
 }
 
 static void msm_geni_serial_stop_tx(struct uart_port *uport)
@@ -1125,9 +1136,6 @@ static void start_rx_sequencer(struct uart_port *uport)
 		return;
 
 	geni_status = geni_read_reg_nolog(uport->membase, SE_GENI_STATUS);
-	IPC_LOG_MSG(port->ipc_log_misc, "%s: 0x%x\n",
-		    __func__, geni_status);
-
 	if (geni_status & S_GENI_CMD_ACTIVE) {
 		if (port->xfer_mode == SE_DMA) {
 			IPC_LOG_MSG(port->ipc_log_misc,
@@ -1221,14 +1229,14 @@ static void msm_geni_serial_set_manual_flow(bool enable,
 		 * doing a stop_rx.
 		 */
 		mb();
-		IPC_LOG_MSG(port->ipc_log_misc,
+		IPC_LOG_MSG(port->ipc_log_pwr,
 			"%s: Manual Flow Enabled, HW Flow OFF\n", __func__);
 	} else {
 		geni_write_reg_nolog(0, port->uport.membase,
 						SE_UART_MANUAL_RFR);
 		/* Ensure that the manual flow off writes go through */
 		mb();
-		IPC_LOG_MSG(port->ipc_log_misc,
+		IPC_LOG_MSG(port->ipc_log_pwr,
 			"%s: Manual Flow Disabled, HW Flow ON\n", __func__);
 	}
 }
@@ -1244,6 +1252,7 @@ static void stop_rx_sequencer(struct uart_port *uport)
 	u32 dma_rx_irq_stat;
 	u32 DMA_RX_CANCEL_BIT;
 
+	IPC_LOG_MSG(port->ipc_log_misc, "%s\n", __func__);
 	if (port->xfer_mode == FIFO_MODE) {
 		geni_s_irq_en = geni_read_reg_nolog(uport->membase,
 							SE_GENI_S_IRQ_EN);
@@ -1280,8 +1289,6 @@ static void stop_rx_sequencer(struct uart_port *uport)
 				uport->membase, SE_DMA_RX_IRQ_CLR);
 	}
 
-	IPC_LOG_MSG(port->ipc_log_misc, "%s: Start 0x%x\n",
-		    __func__, geni_status);
 	geni_cancel_s_cmd(uport->membase);
 	/*
 	 * Ensure that the cancel goes through before polling for the
@@ -1353,8 +1360,7 @@ exit_rx_seq:
 		msm_geni_serial_rx_fsm_rst(uport);
 
 	geni_status = geni_read_reg_nolog(uport->membase, SE_GENI_STATUS);
-	IPC_LOG_MSG(port->ipc_log_misc, "%s: End 0x%x\n",
-		    __func__, geni_status);
+	IPC_LOG_MSG(port->ipc_log_misc, "%s: 0x%x\n", __func__, geni_status);
 }
 
 static void msm_geni_serial_stop_rx(struct uart_port *uport)
@@ -1539,11 +1545,8 @@ static int msm_geni_serial_handle_dma_rx(struct uart_port *uport, bool drop_rx)
 
 	geni_status = geni_read_reg_nolog(uport->membase, SE_GENI_STATUS);
 	/* Possible stop rx is called */
-	if (!(geni_status & S_GENI_CMD_ACTIVE)) {
-		IPC_LOG_MSG(msm_port->ipc_log_misc,
-			    "%s: GENI: 0x%x\n", __func__, geni_status);
+	if (!(geni_status & S_GENI_CMD_ACTIVE))
 		return 0;
-	}
 
 	if (unlikely(!msm_port->rx_buf)) {
 		IPC_LOG_MSG(msm_port->ipc_log_rx, "%s: NULL Rx_buf\n",
@@ -1616,13 +1619,14 @@ static irqreturn_t msm_geni_serial_isr(int isr, void *dev)
 	unsigned int dma_tx_status;
 	unsigned int dma_rx_status;
 	struct uart_port *uport = dev;
+	unsigned long flags;
 	unsigned int m_irq_en;
 	unsigned int geni_status;
 	struct msm_geni_serial_port *msm_port = GET_DEV_PORT(uport);
 	struct tty_port *tport = &uport->state->port;
 	bool drop_rx = false;
 
-	spin_lock(&uport->lock);
+	spin_lock_irqsave(&uport->lock, flags);
 	if (uart_console(uport) && uport->suspended) {
 		IPC_LOG_MSG(msm_port->console_log,
 			"%s. Console in suspend state\n", __func__);
@@ -1728,7 +1732,7 @@ static irqreturn_t msm_geni_serial_isr(int isr, void *dev)
 	}
 
 exit_geni_serial_isr:
-	spin_unlock(&uport->lock);
+	spin_unlock_irqrestore(&uport->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -1812,7 +1816,6 @@ static void msm_geni_serial_shutdown(struct uart_port *uport)
 	unsigned long flags;
 	int ret;
 
-	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s:\n", __func__);
 	/* Stop the console before stopping the current tx */
 	if (uart_console(uport)) {
 		console_stop(uport->cons);
@@ -1853,7 +1856,7 @@ static void msm_geni_serial_shutdown(struct uart_port *uport)
 			free_irq(msm_port->wakeup_irq, uport);
 		}
 	}
-	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s: End\n", __func__);
+	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s\n", __func__);
 }
 
 static int msm_geni_serial_port_setup(struct uart_port *uport)
@@ -1930,7 +1933,6 @@ static int msm_geni_serial_port_setup(struct uart_port *uport)
 	 * framework.
 	 */
 	mb();
-
 	return 0;
 free_dma:
 	if (msm_port->rx_dma) {
@@ -1947,7 +1949,6 @@ static int msm_geni_serial_startup(struct uart_port *uport)
 	int ret = 0;
 	struct msm_geni_serial_port *msm_port = GET_DEV_PORT(uport);
 
-	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s:\n", __func__);
 	scnprintf(msm_port->name, sizeof(msm_port->name), "msm_serial_geni%d",
 				uport->line);
 
@@ -1964,13 +1965,8 @@ static int msm_geni_serial_startup(struct uart_port *uport)
 
 	get_tx_fifo_size(msm_port);
 	if (!msm_port->port_setup) {
-		ret = msm_geni_serial_port_setup(uport);
-		if (ret) {
-			IPC_LOG_MSG(msm_port->ipc_log_misc,
-				    "%s: port_setup Fail ret:%d\n",
-				    __func__, ret);
+		if (msm_geni_serial_port_setup(uport))
 			goto exit_startup;
-		}
 	}
 
 	/*
@@ -2003,11 +1999,11 @@ static int msm_geni_serial_startup(struct uart_port *uport)
 			goto exit_startup;
 		}
 	}
+	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s\n", __func__);
 exit_startup:
 	if (likely(!uart_console(uport)))
 		msm_geni_serial_power_off(&msm_port->uport);
 	msm_port->startup_in_progress = false;
-	IPC_LOG_MSG(msm_port->ipc_log_misc, "%s: ret:%d\n", __func__, ret);
 
 	return ret;
 }
@@ -2532,6 +2528,16 @@ static struct uart_driver msm_geni_console_driver = {
 	.nr =  GENI_UART_CONS_PORTS,
 	.cons = &cons_ops,
 };
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in user version
+static struct uart_driver msm_geni_console_driver_no_cons = {
+	.owner = THIS_MODULE,
+	.driver_name = "msm_geni_console",
+	.dev_name = "ttyMSM",
+	.nr =  GENI_UART_NR_PORTS,
+	.cons = NULL,
+};
+#endif
 #else
 static int console_register(struct uart_driver *drv)
 {
@@ -2730,6 +2736,34 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 								__func__);
 		return -ENODEV;
 	}
+	
+
+#ifdef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for close console in user version
+	if (boot_with_console() == false) {
+		if (drv->cons) {
+#ifdef VENDOR_EDIT
+		//Jiaochao.Shi@BSP.CHG.Basic 2018/05/01 add for console
+		pr_err("%s: console start get pinctrl\n", __FUNCTION__);
+		serial_pinctrl = devm_pinctrl_get(&pdev->dev);
+		if (IS_ERR_OR_NULL(serial_pinctrl)) {
+			dev_err(&pdev->dev, "No serial_pinctrl config specified!\n");
+		} else {
+			serial_pinctrl_state_disable =
+			pinctrl_lookup_state(serial_pinctrl, PINCTRL_SLEEP);
+			if (IS_ERR_OR_NULL(serial_pinctrl_state_disable)) {
+				dev_err(&pdev->dev, "No serial_pinctrl_state_disable config specified!\n");
+			} else {
+				pinctrl_select_state(serial_pinctrl, serial_pinctrl_state_disable);
+			}
+		}
+#endif
+
+			dev_err(&pdev->dev, "boot with console false\n");
+			return -ENODEV;
+		}
+	}
+#endif
 
 	if (pdev->dev.of_node) {
 		if (drv->cons) {
@@ -2939,14 +2973,9 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 	ret = msm_geni_serial_get_ver_info(uport);
 	if (ret)
 		goto exit_geni_serial_probe;
-
-	IPC_LOG_MSG(dev_port->ipc_log_misc, "%s: port:%s irq:%d\n", __func__,
-		    uport->name, uport->irq);
 	return uart_add_one_port(drv, uport);
 
 exit_geni_serial_probe:
-	IPC_LOG_MSG(dev_port->ipc_log_misc, "%s: fail port:%s ret:%d\n",
-		    __func__, uport->name, ret);
 	return ret;
 }
 
@@ -3050,8 +3079,7 @@ static int msm_geni_serial_sys_suspend_noirq(struct device *dev)
 	struct uart_port *uport = &port->uport;
 
 	if (uart_console(uport)) {
-		uart_suspend_port((struct uart_driver *)uport->private_data,
-					uport);
+		uart_suspend_port((struct uart_driver *)uport->private_data,uport);
 	} else {
 		struct uart_state *state = uport->state;
 		struct tty_port *tty_port = &state->port;
@@ -3152,19 +3180,46 @@ static int __init msm_geni_serial_init(void)
 		msm_geni_console_port.uport.line = i;
 	}
 
+#ifndef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for  close console in user version
 	ret = console_register(&msm_geni_console_driver);
+#else
+	if (boot_with_console() == true) {
+		ret = console_register(&msm_geni_console_driver);
+	} else {
+		ret = console_register(&msm_geni_console_driver_no_cons);
+	}
+#endif /* VENDOR_EDIT */
 	if (ret)
 		return ret;
 
 	ret = uart_register_driver(&msm_geni_serial_hs_driver);
 	if (ret) {
+#ifndef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for  close console in user version
 		uart_unregister_driver(&msm_geni_console_driver);
+#else
+		if (boot_with_console() == true) {
+			uart_unregister_driver(&msm_geni_console_driver);
+		} else {
+			uart_unregister_driver(&msm_geni_console_driver_no_cons);
+		}
+#endif /* VENDOR_EDIT */
 		return ret;
 	}
 
 	ret = platform_driver_register(&msm_geni_serial_platform_driver);
 	if (ret) {
+#ifndef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for  close console in user version
 		console_unregister(&msm_geni_console_driver);
+#else
+		if (boot_with_console() == true) {
+			console_unregister(&msm_geni_console_driver);
+		} else {
+			console_unregister(&msm_geni_console_driver_no_cons);
+		}
+#endif /* VENDOR_EDIT */
 		uart_unregister_driver(&msm_geni_serial_hs_driver);
 		return ret;
 	}
@@ -3179,7 +3234,17 @@ static void __exit msm_geni_serial_exit(void)
 {
 	platform_driver_unregister(&msm_geni_serial_platform_driver);
 	uart_unregister_driver(&msm_geni_serial_hs_driver);
+
+#ifndef VENDOR_EDIT
+//Weizhong.Wu@BSP.POWER.Basic 2019/10/13 add for  close console in user version
 	console_unregister(&msm_geni_console_driver);
+#else
+	if (boot_with_console() == true) {
+		console_unregister(&msm_geni_console_driver);
+	} else {
+		console_unregister(&msm_geni_console_driver_no_cons);
+	}
+#endif /* VENDOR_EDIT */
 }
 module_exit(msm_geni_serial_exit);
 
