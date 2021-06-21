@@ -22,6 +22,7 @@
 #include "npu_common.h"
 #include "npu_hw.h"
 
+
 /* -------------------------------------------------------------------------
  * Defines
  * -------------------------------------------------------------------------
@@ -1654,6 +1655,7 @@ static int npu_parse_dt_bw(struct npu_device *npu_dev)
 
 	if (of_find_property(pdev->dev.of_node, "qcom,src-dst-ports", &len)) {
 		len /= sizeof(ports[0]);
+
 		if (len % 2 || len > ARRAY_SIZE(ports)) {
 			NPU_ERR("Unexpected number of ports %d\n", len);
 			return -EINVAL;
