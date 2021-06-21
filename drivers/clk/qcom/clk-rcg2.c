@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2013, 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, 2018-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -1551,7 +1551,6 @@ static const struct clk_ops clk_rcg2_dfs_ops = {
 	.get_parent = clk_rcg2_get_parent,
 	.determine_rate = clk_rcg2_dfs_determine_rate,
 	.recalc_rate = clk_rcg2_dfs_recalc_rate,
-	.list_rate = clk_rcg2_list_rate,
 };
 
 static int clk_rcg2_enable_dfs(const struct clk_rcg_dfs_data *data,
