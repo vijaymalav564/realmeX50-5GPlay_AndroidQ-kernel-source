@@ -13,6 +13,11 @@
 #include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/workqueue.h>
+#ifdef VENDOR_EDIT
+/*Xiaoyang.Huang@RM.Camera add for vibration nodifier,2020/01/21*/
+#include <linux/notifier.h>
+#include <linux/export.h>
+#endif
 
 /* Vibrator-LDO register definitions */
 #define QPNP_VIB_LDO_REG_STATUS1	0x08
@@ -32,7 +37,10 @@
  * Define vibration periods: default(5sec), min(50ms), max(15sec) and
  * overdrive(30ms).
  */
-#define QPNP_VIB_MIN_PLAY_MS		50
+#ifdef VENDOR_EDIT
+/*Murphy@BSP.Kernel.Driver, 2019/04/12, Modify for viber min*/
+#define QPNP_VIB_MIN_PLAY_MS		35
+#endif
 #define QPNP_VIB_PLAY_MS		5000
 #define QPNP_VIB_MAX_PLAY_MS		15000
 #define QPNP_VIB_OVERDRIVE_PLAY_MS	30
@@ -55,6 +63,41 @@ struct vib_ldo_chip {
 	bool			vib_enabled;
 	bool			disable_overdrive;
 };
+
+#ifdef VENDOR_EDIT
+/*Xiaoyang.Huang@RM.Camera add for vibrate nodifier,2020/01/21*/
+static BLOCKING_NOTIFIER_HEAD(vibrator_notifier_list);
+
+/**
+*	vibrator_register_client - register a client notifier
+*	@nb: notifier block to callback on events
+*/
+int vibrator_register_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&vibrator_notifier_list, nb);
+}
+EXPORT_SYMBOL(vibrator_register_client);
+
+/**
+*	vibrator_unregister_client - unregister a client notifier
+*	@nb: notifier block to callback on events
+*/
+int vibrator_unregister_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&vibrator_notifier_list, nb);
+}
+EXPORT_SYMBOL(vibrator_unregister_client);
+
+/**
+* vibrator_notifier_call_chain - notify clients of vibrate event
+*
+*/
+int vibrator_notifier_call_chain(unsigned long val, void *v)
+{
+	return blocking_notifier_call_chain(&vibrator_notifier_list, val, v);
+}
+EXPORT_SYMBOL_GPL(vibrator_notifier_call_chain);
+#endif
 
 static inline int qpnp_vib_ldo_poll_status(struct vib_ldo_chip *chip)
 {
@@ -176,6 +219,10 @@ static void qpnp_vib_work(struct work_struct *work)
 	int ret = 0;
 
 	if (chip->state) {
+		#ifdef VENDOR_EDIT
+		/*Xiaoyang.Huang@RM.Camera add for vibrate nodifier,2020/01/21*/
+		vibrator_notifier_call_chain(1, &chip->vib_play_ms);
+		#endif
 		if (!chip->vib_enabled)
 			ret = qpnp_vibrator_play_on(chip);
 
@@ -189,6 +236,10 @@ static void qpnp_vib_work(struct work_struct *work)
 			cancel_work_sync(&chip->overdrive_work);
 		}
 		qpnp_vib_ldo_enable(chip, false);
+		#ifdef VENDOR_EDIT
+		/*Xiaoyang.Huang@RM.Camera add for vibrate nodifier,2020/01/21*/
+		vibrator_notifier_call_chain(0, &chip->vib_play_ms);
+		#endif
 	}
 }
 
@@ -198,7 +249,12 @@ static enum hrtimer_restart vib_stop_timer(struct hrtimer *timer)
 					     stop_timer);
 
 	chip->state = 0;
+	#ifdef VENDOR_EDIT
+	//Murphy@BSP.Kernel.Driver, 2019/04/12, fix sometimes the vibrator shake long time issue
+	queue_work(system_unbound_wq, &chip->vib_work);
+	#else
 	schedule_work(&chip->vib_work);
+	#endif
 	return HRTIMER_NORESTART;
 }
 
@@ -326,9 +382,17 @@ static ssize_t qpnp_vib_store_activate(struct device *dev,
 	mutex_lock(&chip->lock);
 	hrtimer_cancel(&chip->stop_timer);
 	chip->state = val;
-	pr_debug("state = %d, time = %llums\n", chip->state, chip->vib_play_ms);
+	#ifdef VENDOR_EDIT
+	/*Murphy@BSP.Kernel.Driver, 2019/04/12, Modify for viber log*/
+	pr_info("state = %d, time = %llums\n", chip->state, chip->vib_play_ms);
+	#endif
 	mutex_unlock(&chip->lock);
+	#ifdef VENDOR_EDIT
+	//Murphy@BSP.Kernel.Driver, 2019/04/12, fix sometimes the vibrator shake long time issue
+	queue_work(system_unbound_wq, &chip->vib_work);
+	#else
 	schedule_work(&chip->vib_work);
+	#endif
 
 	return count;
 }
