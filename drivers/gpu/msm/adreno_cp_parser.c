@@ -1019,8 +1019,18 @@ int adreno_ib_create_object_list(struct kgsl_device *device,
 		SNAPSHOT_GPU_OBJECT_IB, ib_obj_list, 1);
 
 	/* Even if there was an error return the remaining objects found */
+#ifndef VENDOR_EDIT
+/* Cong.Dai@BSP.Kernel.Stability 2020/02/03 add for avoid memleak issue when ib_obj_list no use*/
 	if (ib_obj_list->num_objs)
 		*out_ib_obj_list = ib_obj_list;
+#else
+	if (ib_obj_list->num_objs) {
+		*out_ib_obj_list = ib_obj_list;
+	} else {
+		vfree(ib_obj_list->obj_list);
+		kfree(ib_obj_list);
+	}
+#endif
 
 	return ret;
 }

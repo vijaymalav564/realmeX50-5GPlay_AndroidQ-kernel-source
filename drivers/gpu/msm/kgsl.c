@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -25,6 +25,7 @@
 #include "kgsl_mmu.h"
 #include "kgsl_sync.h"
 #include "kgsl_trace.h"
+
 
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
@@ -304,7 +305,7 @@ static void kgsl_destroy_ion(struct kgsl_dma_buf_meta *meta)
 	if (meta != NULL) {
 		remove_dmabuf_list(meta);
 		dma_buf_unmap_attachment(meta->attach, meta->table,
-			DMA_BIDIRECTIONAL);
+			DMA_FROM_DEVICE);
 		dma_buf_detach(meta->dmabuf, meta->attach);
 		dma_buf_put(meta->dmabuf);
 		kfree(meta);
@@ -2879,7 +2880,7 @@ static int kgsl_setup_dma_buf(struct kgsl_device *device,
 	entry->memdesc.flags &= ~((uint64_t) KGSL_MEMFLAGS_USE_CPU_MAP);
 	entry->memdesc.flags |= (uint64_t)KGSL_MEMFLAGS_USERMEM_ION;
 
-	sg_table = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
+	sg_table = dma_buf_map_attachment(attach, DMA_TO_DEVICE);
 
 	if (IS_ERR_OR_NULL(sg_table)) {
 		ret = PTR_ERR(sg_table);
@@ -4597,7 +4598,6 @@ static unsigned long _cpu_get_unmapped_area(unsigned long bottom,
 {
 	struct vm_unmapped_area_info info;
 	unsigned long addr, err;
-
 	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
 	info.low_limit = bottom;
 	info.high_limit = top;
@@ -4613,7 +4613,6 @@ static unsigned long _cpu_get_unmapped_area(unsigned long bottom,
 	err = security_mmap_addr(addr);
 	return err ? err : addr;
 }
-
 static unsigned long _search_range(struct kgsl_process_private *private,
 		struct kgsl_mem_entry *entry,
 		unsigned long start, unsigned long end,
@@ -4719,7 +4718,6 @@ static unsigned long _get_svm_area(struct kgsl_process_private *private,
 				start, (end - len) & ~(align - 1));
 
 		vma = find_vma(current->mm, addr);
-
 		if (vma == NULL || ((addr + len) <= vma->vm_start)) {
 			result = _gpu_set_svm_region(private, entry, addr, len);
 
@@ -4739,7 +4737,6 @@ static unsigned long _get_svm_area(struct kgsl_process_private *private,
 	result = _search_range(private, entry, start, addr, len, align);
 	if (IS_ERR_VALUE(result) && hint != 0)
 		result = _search_range(private, entry, addr, end, len, align);
-
 	return result;
 }
 
@@ -5275,6 +5272,21 @@ static int __init kgsl_core_init(void)
 	}
 
 	sched_setscheduler(kgsl_driver.worker_thread, SCHED_FIFO, &param);
+
+	#ifdef VENDOR_EDIT
+	//rongchun.zhang@psw.mm.display, 2019-12-26, add for signal fence fast
+	kthread_init_worker(&kgsl_driver.signal_fence_worker);
+
+	kgsl_driver.signal_fence_worker_thread = kthread_run(kthread_worker_fn,
+		&kgsl_driver.signal_fence_worker, "kgsl_signal_fence_worker_thread");
+
+	if (IS_ERR(kgsl_driver.signal_fence_worker_thread)) {
+		pr_err("unable to start kgsl_signal_fence_worker_thread\n");
+		goto err;
+	}
+
+	(kgsl_driver.signal_fence_worker_thread)->static_ux = 1;
+	#endif
 
 	kgsl_events_init();
 

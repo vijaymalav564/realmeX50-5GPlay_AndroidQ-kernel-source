@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2019, The Linux Foundation. All rights reserved.
  */
 #ifndef __KGSL_H
 #define __KGSL_H
@@ -152,6 +152,12 @@ struct kgsl_driver {
 	struct workqueue_struct *mem_workqueue;
 	struct kthread_worker worker;
 	struct task_struct *worker_thread;
+
+	#ifdef VENDOR_EDIT
+	//rongchun.zhang@psw.mm.display, 2019-12-26, add for signal fence fast
+	struct kthread_worker signal_fence_worker;
+	struct task_struct *signal_fence_worker_thread;
+	#endif
 };
 
 extern struct kgsl_driver kgsl_driver;
@@ -305,7 +311,12 @@ struct kgsl_event {
 	void *priv;
 	struct list_head node;
 	unsigned int created;
+	#ifndef VENDOR_EDIT
+	//rongchun.zhang@psw.mm.display, 2019-12-26, add for signal fence fast
 	struct work_struct work;
+	#else
+	struct kthread_work work;
+	#endif
 	int result;
 	struct kgsl_event_group *group;
 };
