@@ -617,6 +617,7 @@ static void socket_read_work_fn(struct work_struct *work)
 		diag_ws_release();
 		return;
 	}
+
 	fwd_info = info->fwd_ctxt;
 	if (info->port_type == PORT_TYPE_SERVER &&
 		(!fwd_info || !atomic_read(&fwd_info->opened)))
